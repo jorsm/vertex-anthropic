@@ -12,11 +12,17 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "commands": [
+      {
+        "command": "vertexAnthropic.refreshModels",
+        "title": "Vertex Anthropic: Refresh Models"
+      }
+    ],
     "languageModelChatProviders": [
       {
         "identifier": "vertex-anthropic",
-        "name": "Vertex Claude 4.6 Opus",
-        "displayName": "Vertex Claude 4.6 Opus",
+        "name": "Vertex Claude (Anthropic)",
+        "displayName": "Vertex Claude (Anthropic)",
         "vendor": "Google Cloud Vertex AI"
       }
     ],
@@ -26,12 +32,7 @@
         "vertexAnthropic.projectId": {
           "type": "string",
           "default": "",
-          "description": "GCP Project ID to use with Vertex AI"
-        },
-        "vertexAnthropic.region": {
-          "type": "string",
-          "default": "us-central1",
-          "description": "GCP Region for Vertex AI (e.g., us-central1, europe-west1)"
+          "description": "GCP Project ID to use with Vertex AI. Models and regions are auto-discovered."
         }
       }
     }
