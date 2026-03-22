@@ -1,5 +1,8 @@
 import * as vscode from "vscode";
 import { VertexAnthropicProvider } from "./VertexAnthropicProvider";
+import { UsageTrackerService } from "./UsageTrackerService";
+import { CostStatusBar } from "./CostStatusBar";
+import { DashboardWebview } from "./DashboardWebview";
 
 export function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration("vertexAnthropic");
@@ -12,7 +15,18 @@ export function activate(context: vscode.ExtensionContext) {
     return;
   }
 
-  const provider = new VertexAnthropicProvider(projectId);
+  const usageTracker = new UsageTrackerService(context);
+  const costStatusBar = new CostStatusBar(usageTracker);
+  context.subscriptions.push(costStatusBar);
+
+  const provider = new VertexAnthropicProvider(projectId, usageTracker);
+
+  // Register dashboard command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("claudeBilling.showDashboard", () => {
+      DashboardWebview.createOrShow(context.extensionUri, usageTracker);
+    })
+  );
 
   // Register the chat provider
   const disposable = vscode.lm.registerLanguageModelChatProvider("Google Cloud Vertex AI", provider);
