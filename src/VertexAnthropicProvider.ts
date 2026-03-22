@@ -1,6 +1,7 @@
 import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
 import * as vscode from "vscode";
 import localCatalog from "./models.json";
+import { UsageTrackerService } from "./UsageTrackerService";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -41,13 +42,15 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
   private region = "global";
   private availableModels: ModelSpec[] = [];
   private discoveryDone = false;
+  private readonly usageTracker: UsageTrackerService;
 
   /** Fires when the available model list changes — VS Code re-queries provideLanguageModelChatInformation. */
   private readonly _onDidChange = new vscode.EventEmitter<void>();
   readonly onDidChangeLanguageModelChatInformation = this._onDidChange.event;
 
-  constructor(projectId: string) {
+  constructor(projectId: string, usageTracker: UsageTrackerService) {
     this.projectId = projectId;
+    this.usageTracker = usageTracker;
   }
 
   // ── Model catalog loading ─────────────────────────────────────────────
@@ -254,6 +257,7 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
       // Extract system prompt from System-role messages
       const systemParts: string[] = [];
       const mappedMessages: any[] = [];
+      const charCount = { system: 0, user_text: 0, assistant_text: 0, image: 0, tool_use: 0, tool_result: 0 };
 
       for (let i = 0; i < messages.length; i++) {
         const msg = messages[i];
@@ -293,6 +297,7 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
           for (const part of msg.content) {
             if (part instanceof vscode.LanguageModelTextPart && part.value.length > 0) {
               systemParts.push(part.value);
+              charCount.system += part.value.length;
             }
           }
           log(`     → Extracted as system prompt (${systemParts.length} part(s) so far, ${systemParts.reduce((a, s) => a + s.length, 0)} chars total)`);
@@ -306,6 +311,8 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
           if (part instanceof vscode.LanguageModelTextPart) {
             if (part.value.length > 0) {
               contentParts.push({ type: "text", text: part.value });
+              if (role === "user") charCount.user_text += part.value.length;
+              else charCount.assistant_text += part.value.length;
             }
           } else if (part instanceof vscode.LanguageModelToolResultPart) {
             let toolResultStr = "";
@@ -324,6 +331,7 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
               tool_use_id: part.callId,
               content: toolResultStr || " ",
             });
+            charCount.tool_result += toolResultStr.length;
           } else if (part instanceof vscode.LanguageModelToolCallPart) {
             contentParts.push({
               type: "tool_use",
@@ -331,6 +339,7 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
               name: part.name,
               input: part.input,
             });
+            charCount.tool_use += JSON.stringify(part.input).length + part.name.length;
           } else if (part instanceof vscode.LanguageModelDataPart) {
             // Image data → Anthropic base64 image content block
             if (part.mimeType?.startsWith("image/")) {
@@ -343,6 +352,7 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
                   data: base64,
                 },
               });
+              charCount.image += base64.length;
               log(`     🖼️  Mapped image: ${part.mimeType}, ${part.data.byteLength} bytes → base64 (${base64.length} chars)`);
             } else {
               // Non-image data part — try to include as text
@@ -350,6 +360,8 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
                 const text = new TextDecoder().decode(part.data);
                 if (text.length > 0) {
                   contentParts.push({ type: "text", text });
+                  if (role === "user") charCount.user_text += text.length;
+                  else charCount.assistant_text += text.length;
                   log(`     📎 Mapped non-image DataPart (${part.mimeType}) as text (${text.length} chars)`);
                 }
               } catch {
@@ -379,12 +391,42 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
 
       if (tools?.length) {
         log(`  🔧 Tools provided: ${tools.map((t) => t.name).join(", ")}`);
+        charCount.system += JSON.stringify(tools).length;
       }
 
       const spec = this.availableModels.find((m) => m.id === modelId);
       const maxTokens = spec?.maxOutputTokens ?? 4096;
 
-      const systemPrompt = systemParts.length > 0 ? systemParts.join("\n\n") : undefined;
+      let systemBlocks: any[] | undefined = undefined;
+      if (systemParts.length > 0) {
+          systemBlocks = systemParts.map(text => ({ type: "text", text }));
+      }
+
+      // 1. Static Prefix Caching (System / Tools)
+      let prefixCached = false;
+      if (tools && tools.length > 0) {
+          tools[tools.length - 1].cache_control = { type: "ephemeral" };
+          prefixCached = true;
+      } else if (systemBlocks && systemBlocks.length > 0) {
+          systemBlocks[systemBlocks.length - 1].cache_control = { type: "ephemeral" };
+          prefixCached = true;
+      }
+
+      // 2. Chat History Caching (Messages)
+      let historyTokens = 0;
+      for (let i = 0; i < mappedMessages.length - 1; i++) {
+         historyTokens += Math.ceil(JSON.stringify(mappedMessages[i]).length / 4);
+      }
+      
+      let historyCached = false;
+      if (historyTokens > 1024 && mappedMessages.length > 1) {
+         const secondToLast = mappedMessages[mappedMessages.length - 2];
+         if (secondToLast.content && secondToLast.content.length > 0) {
+             const lastBlock = secondToLast.content[secondToLast.content.length - 1];
+             lastBlock.cache_control = { type: "ephemeral" };
+             historyCached = true;
+         }
+      }
 
       // Log final mapped messages summary
       log(`  ── Mapped messages summary ──`);
@@ -392,32 +434,38 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
         const mm = mappedMessages[i];
         const partsDesc = mm.content
           .map((p: any) => {
+            const cacheFlag = p.cache_control ? " [CACHED]" : "";
             if (p.type === "text") {
-              return `text(${p.text.length} chars)`;
+              return `text(${p.text.length} chars)${cacheFlag}`;
             }
             if (p.type === "tool_use") {
-              return `tool_use(${p.name})`;
+              return `tool_use(${p.name})${cacheFlag}`;
             }
             if (p.type === "tool_result") {
-              return `tool_result(${p.tool_use_id})`;
+              return `tool_result(${p.tool_use_id})${cacheFlag}`;
             }
-            return p.type;
+            return p.type + cacheFlag;
           })
           .join(", ");
         log(`     [${i}] ${mm.role}: ${partsDesc}`);
       }
-      if (systemPrompt) {
-        const sysPreview = systemPrompt.length > 300 ? "…" + systemPrompt.slice(-300) : systemPrompt;
-        log(`     system (${systemPrompt.length} chars): ${sysPreview}`);
+      if (systemBlocks && systemBlocks.length > 0) {
+        const sysChars = systemParts.reduce((a, b) => a + b.length, 0);
+        const sysPreview = sysChars > 300 ? "…" + systemParts[0].slice(-300) : systemParts[0];
+        const cacheFlag = systemBlocks[systemBlocks.length - 1].cache_control ? " [CACHED]" : "";
+        log(`     system (${sysChars} chars): ${sysPreview}${cacheFlag}`);
       }
-      log(`  Sending: model=${modelId}, max_tokens=${maxTokens}, msgs=${mappedMessages.length}, system=${systemPrompt ? systemPrompt.length + " chars" : "none"}, tools=${tools?.length ?? 0}`);
+      
+      const sysLog = systemBlocks ? systemParts.reduce((a, b) => a + b.length, 0) + " chars" : "none";
+      log(`  Sending: model=${modelId}, max_tokens=${maxTokens}, msgs=${mappedMessages.length}, system=${sysLog}, tools=${tools?.length ?? 0}`);
+      log(`  Caching Strategy Applied: Prefix=${prefixCached}, History=${historyCached} (Estimated ${historyTokens} tokens)`);
 
       const stream = await this.client.messages.create({
         model: modelId,
         messages: mappedMessages,
         max_tokens: maxTokens,
         stream: true,
-        ...(systemPrompt ? { system: systemPrompt } : {}),
+        ...(systemBlocks ? { system: systemBlocks } : {}),
         ...(tools?.length ? { tools } : {}),
       });
 
@@ -427,6 +475,11 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
       let activeToolName = "";
       let activeToolJson = "";
       let chunkCount = 0;
+
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let cacheReadTokens = 0;
+      let cacheCreateTokens = 0;
 
       for await (const chunk of stream) {
         chunkCount++;
@@ -442,20 +495,26 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
         if (chunk.type === "message_start") {
           const usage = (chunk as any).message?.usage;
           if (usage) {
-            log(`  📊 Input tokens: ${usage.input_tokens ?? "?"}, cache_read: ${usage.cache_read_input_tokens ?? 0}, cache_create: ${usage.cache_creation_input_tokens ?? 0}`);
+            inputTokens = usage.input_tokens ?? 0;
+            cacheReadTokens = usage.cache_read_input_tokens ?? 0;
+            cacheCreateTokens = usage.cache_creation_input_tokens ?? 0;
+            log(`  📊 Input tokens: ${inputTokens}, cache_read: ${cacheReadTokens}, cache_create: ${cacheCreateTokens}`);
           }
         } else if (chunk.type === "message_delta") {
           const usage = (chunk as any).usage;
           if (usage) {
-            log(`  📊 Output tokens: ${usage.output_tokens ?? "?"}`);
+            outputTokens = usage.output_tokens ?? 0;
+            log(`  📊 Output tokens: ${outputTokens}`);
           }
         } else if (chunk.type === "content_block_delta" && chunk.delta.type === "text_delta") {
+          charCount.assistant_text += chunk.delta.text.length;
           progress.report(new vscode.LanguageModelTextPart(chunk.delta.text));
         } else if (chunk.type === "content_block_start" && chunk.content_block.type === "tool_use") {
           activeToolCallId = chunk.content_block.id;
           activeToolName = chunk.content_block.name;
           activeToolJson = "";
         } else if (chunk.type === "content_block_delta" && chunk.delta.type === "input_json_delta") {
+          charCount.tool_use += chunk.delta.partial_json.length;
           activeToolJson += chunk.delta.partial_json;
         } else if (chunk.type === "content_block_stop" && activeToolCallId) {
           let parsedInput = {};
@@ -472,6 +531,16 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
         }
       }
       log(`  ✅ Stream finished — ${chunkCount} chunks total`);
+
+      if (inputTokens > 0 || outputTokens > 0) {
+        this.usageTracker.recordUsage(modelId, {
+          input: inputTokens,
+          output: outputTokens,
+          cache_read: cacheReadTokens,
+          cache_create: cacheCreateTokens,
+          characters: charCount
+        }).catch(err => log(`  ⚠️ Failed to record usage: ${err}`));
+      }
     } catch (e) {
       log(`  ❌ provideLanguageModelChatResponse error: ${e}`);
       throw e;

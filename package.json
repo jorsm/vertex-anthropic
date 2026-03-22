@@ -45,6 +45,11 @@
           "type": "string",
           "default": "https://raw.githubusercontent.com/jorsm/vertex-anthropic/refs/heads/develop/src/models.json",
           "description": "URL to a remote models.json catalog. The extension fetches this on every discovery (with a 3 s timeout) and falls back to the bundled catalog if unavailable. Set to empty to use only the bundled catalog."
+        },
+        "vertexAnthropic.hideBillingWarning": {
+          "type": "boolean",
+          "default": false,
+          "description": "Hide the Estimated Costs warning banner on the Usage Dashboard."
         }
       }
     }
