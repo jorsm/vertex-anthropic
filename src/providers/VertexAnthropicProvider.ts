@@ -1,234 +1,51 @@
 import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
 import * as vscode from "vscode";
-import localCatalog from "./models.json";
-import { UsageTrackerService } from "./UsageTrackerService";
-
-// ─── Types ──────────────────────────────────────────────────────────────────
-
-interface ModelSpec {
-  id: string;
-  displayName: string;
-  family: string;
-  version: string;
-  maxInputTokens: number;
-  maxOutputTokens: number;
-  capabilities: { imageInput: boolean; toolCalling: boolean };
-}
-
-interface ModelCatalog {
-  candidateModels: ModelSpec[];
-  regionPriority: string[];
-}
-
-interface DiscoveryResult {
-  region: string;
-  availableModels: ModelSpec[];
-}
+import { VertexModelProvider, ChatInferenceResult } from "./VertexModelProvider";
 
 // ─── Output channel for diagnostics ─────────────────────────────────────────
 
-const outputChannel = vscode.window.createOutputChannel("Vertex Anthropic");
+const outputChannel = vscode.window.createOutputChannel("Vertex Anthropic Plugin");
 
 function log(msg: string): void {
   const ts = new Date().toISOString();
   outputChannel.appendLine(`[${ts}] ${msg}`);
 }
 
-// ─── Provider ───────────────────────────────────────────────────────────────
+// ─── Provider Plugin ───────────────────────────────────────────────────────
 
-export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider {
+export class VertexAnthropicProvider implements VertexModelProvider {
+  vendor = "anthropic";
   private client!: AnthropicVertex;
-  private projectId: string;
-  private region = "global";
-  private availableModels: ModelSpec[] = [];
-  private discoveryDone = false;
-  private readonly usageTracker: UsageTrackerService;
+  private projectId!: string;
+  private region!: string;
 
-  /** Fires when the available model list changes — VS Code re-queries provideLanguageModelChatInformation. */
-  private readonly _onDidChange = new vscode.EventEmitter<void>();
-  readonly onDidChangeLanguageModelChatInformation = this._onDidChange.event;
-
-  constructor(projectId: string, usageTracker: UsageTrackerService) {
+  initialize(projectId: string, region: string): void {
     this.projectId = projectId;
-    this.usageTracker = usageTracker;
+    this.region = region;
+    this.client = new AnthropicVertex({
+      projectId: this.projectId,
+      region: this.region,
+    });
   }
 
-  // ── Model catalog loading ─────────────────────────────────────────────
-
-  /**
-   * Load model catalog: try remote URL first (if configured), fall back to bundled JSON.
-   * Remote fetch has a 3-second timeout so it never blocks startup significantly.
-   */
-  private async loadModelCatalog(): Promise<ModelCatalog> {
-    const catalogUrl = vscode.workspace.getConfiguration("vertexAnthropic").get<string>("modelCatalogUrl");
-
-    if (catalogUrl) {
-      try {
-        log(`📡 Fetching remote model catalog…`);
-        log(`   URL: ${catalogUrl}`);
-        const t0 = Date.now();
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3000);
-
-        const response = await fetch(catalogUrl, { signal: controller.signal });
-        clearTimeout(timeout);
-        const elapsed = Date.now() - t0;
-
-        if (response.ok) {
-          const remote = (await response.json()) as ModelCatalog;
-          if (remote.candidateModels?.length > 0 && remote.regionPriority?.length > 0) {
-            log(`✅ Remote catalog loaded in ${elapsed} ms — ${remote.candidateModels.length} candidate model(s)`);
-            log(`   Remote models: ${remote.candidateModels.map((m) => m.id).join(", ")}`);
-            log(`   Remote regions: ${remote.regionPriority.join(", ")}`);
-
-            // Compare with bundled catalog
-            const bundledIds = new Set(localCatalog.candidateModels.map((m) => m.id));
-            const remoteIds = new Set(remote.candidateModels.map((m) => m.id));
-            const added = remote.candidateModels.filter((m) => !bundledIds.has(m.id));
-            const removed = localCatalog.candidateModels.filter((m) => !remoteIds.has(m.id));
-            if (added.length > 0) {
-              log(`   🆕 New in remote (not in bundled): ${added.map((m) => m.id).join(", ")}`);
-            }
-            if (removed.length > 0) {
-              log(`   🗑️  In bundled but not in remote: ${removed.map((m) => m.id).join(", ")}`);
-            }
-            if (added.length === 0 && removed.length === 0) {
-              log(`   📋 Remote and bundled catalogs have the same models`);
-            }
-            return remote;
-          }
-          log(`⚠️  Remote catalog has invalid structure (${elapsed} ms), using bundled catalog`);
-          log(`   candidateModels: ${remote.candidateModels?.length ?? "missing"}, regionPriority: ${remote.regionPriority?.length ?? "missing"}`);
-        } else {
-          log(`⚠️  Remote catalog returned HTTP ${response.status} ${response.statusText} (${elapsed} ms), using bundled catalog`);
-        }
-      } catch (e) {
-        const errMsg = e instanceof Error && e.name === "AbortError" ? "timed out after 3 s" : String(e);
-        log(`⚠️  Remote catalog fetch failed: ${errMsg}, using bundled catalog`);
-      }
-    } else {
-      log(`ℹ️  No remote catalog URL configured (vertexAnthropic.modelCatalogUrl is empty)`);
-    }
-
-    log(`📦 Using bundled model catalog — ${localCatalog.candidateModels.length} candidate model(s)`);
-    log(`   Bundled models: ${localCatalog.candidateModels.map((m) => m.id).join(", ")}`);
-    return localCatalog as ModelCatalog;
-  }
-
-  // ── Discovery ───────────────────────────────────────────────────────────
-
-  /**
-   * Discover working region and available models by pinging candidates.
-   *
-   * Strategy:
-   *   1. Try "global" endpoint first (routes to nearest region automatically).
-   *   2. If global fails for *all* candidates, try each regional endpoint in
-   *      priority order until at least one model responds.
-   *   3. The first region where ≥1 model responds is used for all inference.
-   */
-  async discoverModelsAndRegion(): Promise<DiscoveryResult> {
-    const catalog = await this.loadModelCatalog();
-    const candidates = catalog.candidateModels;
-    const regions = catalog.regionPriority;
-
-    log(`Starting model discovery for project "${this.projectId}"…`);
-    log(`Candidate models: ${candidates.map((m) => m.id).join(", ")}`);
-    log(`Region priority: ${regions.join(" → ")}`);
-
-    for (const region of regions) {
-      log(`  Probing region "${region}"…`);
-      const client = new AnthropicVertex({
-        projectId: this.projectId,
-        region,
-      });
-
-      const available: ModelSpec[] = [];
-
-      for (const model of candidates) {
-        const ok = await this.pingModel(client, model.id);
-        if (ok) {
-          available.push(model);
-        }
-      }
-
-      if (available.length > 0) {
-        log(`✅ Region "${region}" — ${available.length} model(s) available: ${available.map((m) => m.id).join(", ")}`);
-
-        // Commit and notify VS Code
-        this.region = region;
-        this.client = client;
-        this.availableModels = available;
-        this.discoveryDone = true;
-        this._onDidChange.fire();
-
-        return { region, availableModels: available };
-      }
-
-      log(`  ⚠️  No models responded in "${region}", trying next…`);
-    }
-
-    // Nothing worked
-    log("❌ No models available in any region.");
-    this.availableModels = [];
-    this.discoveryDone = true;
-    this._onDidChange.fire();
-
-    return { region: "none", availableModels: [] };
-  }
-
-  /**
-   * Send a minimal ping (max_tokens: 1) to see if a model is available.
-   */
-  private async pingModel(client: AnthropicVertex, modelId: string): Promise<boolean> {
+  async pingModel(modelId: string): Promise<boolean> {
     try {
-      await client.messages.create({
+      await this.client.messages.create({
         model: modelId,
         messages: [{ role: "user", content: "ping" }],
         max_tokens: 1,
       });
-      log(`    🏓 ${modelId} → ✅`);
+      log(`    🏓 Anthropic ${modelId} → ✅`);
       return true;
     } catch {
-      log(`    🏓 ${modelId} → ❌`);
+      log(`    🏓 Anthropic ${modelId} → ❌`);
       return false;
     }
   }
 
-  // ── Re-discovery (project changed) ────────────────────────────────────
-
-  /**
-   * Update the project ID. Call `discoverModelsAndRegion()` afterwards to
-   * re-run discovery with the new project.
-   */
-  setProjectId(projectId: string): void {
-    this.projectId = projectId;
-    this.discoveryDone = false;
-  }
-
-  // ── Chat provider interface ───────────────────────────────────────────
-
-  provideLanguageModelChatInformation(_options: vscode.PrepareLanguageModelChatModelOptions, _token: vscode.CancellationToken): vscode.ProviderResult<vscode.LanguageModelChatInformation[]> {
-    if (!this.discoveryDone || this.availableModels.length === 0) {
-      return [];
-    }
-
-    return this.availableModels.map((m) => ({
-      id: m.id,
-      name: `Vertex ${m.displayName}`,
-      family: m.family,
-      version: m.version,
-      maxInputTokens: m.maxInputTokens,
-      maxOutputTokens: m.maxOutputTokens,
-      capabilities: {
-        imageInput: m.capabilities.imageInput,
-        toolCalling: m.capabilities.toolCalling,
-      },
-    }));
-  }
-
   // ── Token counting (heuristic: ~4 chars per token) ─────────────────────
 
-  async provideTokenCount(_model: vscode.LanguageModelChatInformation, text: string | vscode.LanguageModelChatRequestMessage, _token: vscode.CancellationToken): Promise<number> {
+  async provideTokenCount(text: string | vscode.LanguageModelChatRequestMessage, _token: vscode.CancellationToken): Promise<number> {
     if (typeof text === "string") {
       return Math.ceil(text.length / 4);
     }
@@ -244,14 +61,13 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
   // ── Chat response (inference) ─────────────────────────────────────────
 
   async provideLanguageModelChatResponse(
-    model: vscode.LanguageModelChatInformation,
+    modelId: string,
     messages: readonly vscode.LanguageModelChatRequestMessage[],
     options: vscode.ProvideLanguageModelChatResponseOptions,
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken,
-  ): Promise<void> {
-    const modelId = model.version;
-    log(`▶ provideLanguageModelChatResponse called — model: ${modelId}, region: ${this.region}, messages: ${messages.length}`);
+  ): Promise<ChatInferenceResult> {
+    log(`▶ Anthropic Plugin provideLanguageModelChatResponse called — model: ${modelId}, region: ${this.region}, messages: ${messages.length}`);
 
     try {
       // Extract system prompt from System-role messages
@@ -285,7 +101,6 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
             const size = part.data?.byteLength ?? 0;
             log(`     Part [${p}] DataPart mime=${part.mimeType}, size=${size} bytes`);
           } else {
-            // Log all enumerable properties so we can identify unknown part types
             const keys = Object.keys(part as any);
             const snapshot = keys.slice(0, 5).map((k) => `${k}=${String((part as any)[k]).slice(0, 50)}`).join(", ");
             log(`     Part [${p}] Unknown part type: ${Object.getPrototypeOf(part)?.constructor?.name ?? typeof part} — keys: [${keys.join(", ")}] ${snapshot}`);
@@ -383,6 +198,7 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
         mappedMessages.unshift({ role: "user", content: [{ type: "text", text: " " }] });
       }
 
+      // Explicit tool format mapping to Anthropic tool schema. Allows provider to overwrite default tool behaviors.
       const tools: any[] | undefined = options.tools?.map((t) => ({
         name: t.name,
         description: t.description,
@@ -394,8 +210,7 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
         charCount.system += JSON.stringify(tools).length;
       }
 
-      const spec = this.availableModels.find((m) => m.id === modelId);
-      const maxTokens = spec?.maxOutputTokens ?? 4096;
+      const maxTokens = 4096; // Just a default fallback, could be pulled from options or model spec in the future
 
       let systemBlocks: any[] | undefined = undefined;
       if (systemParts.length > 0) {
@@ -433,27 +248,9 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
       for (let i = 0; i < mappedMessages.length; i++) {
         const mm = mappedMessages[i];
         const partsDesc = mm.content
-          .map((p: any) => {
-            const cacheFlag = p.cache_control ? " [CACHED]" : "";
-            if (p.type === "text") {
-              return `text(${p.text.length} chars)${cacheFlag}`;
-            }
-            if (p.type === "tool_use") {
-              return `tool_use(${p.name})${cacheFlag}`;
-            }
-            if (p.type === "tool_result") {
-              return `tool_result(${p.tool_use_id})${cacheFlag}`;
-            }
-            return p.type + cacheFlag;
-          })
+          .map((p: any) => p.type + (p.cache_control ? " [CACHED]" : ""))
           .join(", ");
         log(`     [${i}] ${mm.role}: ${partsDesc}`);
-      }
-      if (systemBlocks && systemBlocks.length > 0) {
-        const sysChars = systemParts.reduce((a, b) => a + b.length, 0);
-        const sysPreview = sysChars > 300 ? "…" + systemParts[0].slice(-300) : systemParts[0];
-        const cacheFlag = systemBlocks[systemBlocks.length - 1].cache_control ? " [CACHED]" : "";
-        log(`     system (${sysChars} chars): ${sysPreview}${cacheFlag}`);
       }
       
       const sysLog = systemBlocks ? systemParts.reduce((a, b) => a + b.length, 0) + " chars" : "none";
@@ -483,9 +280,6 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
 
       for await (const chunk of stream) {
         chunkCount++;
-        if (chunkCount <= 5) {
-          log(`  Chunk #${chunkCount}: type=${chunk.type}`);
-        }
 
         if (token.isCancellationRequested) {
           log(`  Cancelled after ${chunkCount} chunks`);
@@ -532,17 +326,17 @@ export class VertexAnthropicProvider implements vscode.LanguageModelChatProvider
       }
       log(`  ✅ Stream finished — ${chunkCount} chunks total`);
 
-      if (inputTokens > 0 || outputTokens > 0) {
-        this.usageTracker.recordUsage(modelId, {
+      return {
+        usage: {
           input: inputTokens,
           output: outputTokens,
           cache_read: cacheReadTokens,
           cache_create: cacheCreateTokens,
-          characters: charCount
-        }).catch(err => log(`  ⚠️ Failed to record usage: ${err}`));
-      }
+        },
+        charCount
+      };
     } catch (e) {
-      log(`  ❌ provideLanguageModelChatResponse error: ${e}`);
+      log(`  ❌ Anthropic provideLanguageModelChatResponse error: ${e}`);
       throw e;
     }
   }
