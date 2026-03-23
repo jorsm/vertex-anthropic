@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { VertexAnthropicProvider } from "./VertexAnthropicProvider";
+import { VertexChatModelDispatcher } from "./VertexChatModelDispatcher";
 import { UsageTrackerService } from "./UsageTrackerService";
 import { CostStatusBar } from "./CostStatusBar";
 import { DashboardWebview } from "./DashboardWebview";
@@ -19,7 +19,7 @@ export function activate(context: vscode.ExtensionContext) {
   const costStatusBar = new CostStatusBar(usageTracker);
   context.subscriptions.push(costStatusBar);
 
-  const provider = new VertexAnthropicProvider(projectId, usageTracker);
+  const provider = new VertexChatModelDispatcher(projectId, usageTracker);
 
   // Register dashboard command
   context.subscriptions.push(
@@ -65,7 +65,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
-async function runDiscovery(provider: VertexAnthropicProvider): Promise<void> {
+async function runDiscovery(provider: VertexChatModelDispatcher): Promise<void> {
   try {
     const result = await provider.discoverModelsAndRegion();
     if (result.availableModels.length > 0) {
