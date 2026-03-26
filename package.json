@@ -23,8 +23,23 @@
       {
         "command": "vertexAnthropic.refreshModels",
         "title": "Vertex Anthropic: Refresh Models"
+      },
+      {
+        "command": "vertexAnthropic.generateCommitMessage",
+        "title": "Vertex Anthropic: Generate Commit Message",
+        "shortTitle": "Generate Commit Message",
+        "icon": "$(wand)"
       }
     ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "vertexAnthropic.generateCommitMessage",
+          "when": "scmProvider == 'git'",
+          "group": "navigation"
+        }
+      ]
+    },
     "languageModelChatProviders": [
       {
         "identifier": "vertex-anthropic",
@@ -40,11 +55,6 @@
           "type": "string",
           "default": "",
           "description": "GCP Project ID to use with Vertex AI. Models and regions are auto-discovered."
-        },
-        "vertexAnthropic.modelCatalogUrl": {
-          "type": "string",
-          "default": "https://raw.githubusercontent.com/jorsm/vertex-anthropic/refs/heads/develop/src/models.json",
-          "description": "URL to a remote models.json catalog. The extension fetches this on every discovery (with a 3 s timeout) and falls back to the bundled catalog if unavailable. Set to empty to use only the bundled catalog."
         },
         "vertexAnthropic.hideBillingWarning": {
           "type": "boolean",
@@ -73,6 +83,9 @@
     "eslint": "^9.34.0",
     "typescript": "^5.9.2"
   },
+  "extensionDependencies": [
+    "vscode.git"
+  ],
   "dependencies": {
     "@anthropic-ai/vertex-sdk": "^0.14.4",
     "@google/genai": "^1.46.0",
