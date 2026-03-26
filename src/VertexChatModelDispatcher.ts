@@ -1,9 +1,9 @@
 import * as vscode from "vscode";
 import localCatalog from "./models.json";
-import { UsageTrackerService } from "./UsageTrackerService";
-import { VertexModelProvider } from "./providers/VertexModelProvider";
 import { VertexAnthropicProvider } from "./providers/VertexAnthropicProvider";
 import { VertexGoogleProvider } from "./providers/VertexGoogleProvider";
+import { VertexModelProvider } from "./providers/VertexModelProvider";
+import { UsageTrackerService } from "./UsageTrackerService";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -68,73 +68,18 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
     this.activeProviders.set(googleProvider.vendor, googleProvider);
   }
 
-  // ── Model catalog loading ─────────────────────────────────────────────
+  getAnthropicProvider(): VertexAnthropicProvider {
+    return this.activeProviders.get("anthropic") as VertexAnthropicProvider;
+  }
 
-  private async loadModelCatalog(): Promise<ModelCatalog> {
-    const catalogUrl = vscode.workspace.getConfiguration("vertexAnthropic").get<string>("modelCatalogUrl");
-
-    if (catalogUrl) {
-      try {
-        log(`📡 Fetching remote model catalog…`);
-        log(`   URL: ${catalogUrl}`);
-        const t0 = Date.now();
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 3000);
-
-        const response = await fetch(catalogUrl, { signal: controller.signal });
-        clearTimeout(timeout);
-        const elapsed = Date.now() - t0;
-
-        if (response.ok) {
-          const remote = (await response.json()) as ModelCatalog;
-          if (remote.candidateModels?.length > 0 && remote.regionPriority?.length > 0) {
-            const finalModels: ModelSpec[] = [];
-
-            for (const rModel of remote.candidateModels) {
-              const isValid = rModel.id && rModel.vendor && rModel.version && rModel.displayName;
-              
-              if (isValid) {
-                finalModels.push(rModel);
-              } else {
-                log(`⚠️  Remote model '${rModel.id || "unknown"}' is invalid. Missing required fields (e.g. 'vendor').`);
-                log(`   Expected structure: { "id": "...", "vendor": "anthropic|gemini", "version": "...", ... }`);
-                
-                // Graceful fallback to local catalog for this specific model
-                const localMatch = localCatalog.candidateModels.find((m) => m.id === rModel.id);
-                if (localMatch) {
-                  log(`   ↳ Falling back to local bundled definition for '${rModel.id}'.`);
-                  finalModels.push(localMatch as ModelSpec);
-                } else {
-                  log(`   ↳ Model '${rModel.id || "unknown"}' discarded (no local fallback available).`);
-                }
-              }
-            }
-            
-            remote.candidateModels = finalModels;
-            log(`✅ Remote catalog loaded in ${elapsed} ms — ${remote.candidateModels.length} candidate model(s) after validation`);
-            return remote;
-          } else {
-            log(`⚠️  Remote catalog has invalid structure (${elapsed} ms), using bundled catalog`);
-          }
-        } else {
-          log(`⚠️  Remote catalog returned HTTP ${response.status} ${response.statusText} (${elapsed} ms), using bundled catalog`);
-        }
-      } catch (e) {
-        const errMsg = e instanceof Error && e.name === "AbortError" ? "timed out after 3 s" : String(e);
-        log(`⚠️  Remote catalog fetch failed: ${errMsg}, using bundled catalog`);
-      }
-    } else {
-      log(`ℹ️  No remote catalog URL configured (vertexAnthropic.modelCatalogUrl is empty)`);
-    }
-
-    log(`📦 Using bundled model catalog — ${localCatalog.candidateModels.length} candidate model(s)`);
-    return localCatalog as ModelCatalog;
+  getGoogleProvider(): VertexGoogleProvider {
+    return this.activeProviders.get("google") as VertexGoogleProvider;
   }
 
   // ── Discovery ───────────────────────────────────────────────────────────
 
   async discoverModelsAndRegion(): Promise<DiscoveryResult> {
-    const catalog = await this.loadModelCatalog();
+    const catalog = localCatalog as ModelCatalog;
     const candidates = catalog.candidateModels;
     const regions = catalog.regionPriority;
 
@@ -160,7 +105,7 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
 
       if (available.length > 0) {
         log(`✅ Region "${region}" — ${available.length} model(s) available: ${available.map((m) => m.id).join(", ")}`);
-        
+
         this.region = region;
         this.availableModels = available;
         this.discoveryDone = true;
@@ -168,7 +113,7 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
 
         return { region, availableModels: available };
       }
-      
+
       log(`  ⚠️  No models responded in "${region}", trying next…`);
     }
 
@@ -189,10 +134,7 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
 
   // ── Chat provider interface ───────────────────────────────────────────
 
-  provideLanguageModelChatInformation(
-    _options: vscode.PrepareLanguageModelChatModelOptions, 
-    _token: vscode.CancellationToken
-  ): vscode.ProviderResult<vscode.LanguageModelChatInformation[]> {
+  provideLanguageModelChatInformation(_options: vscode.PrepareLanguageModelChatModelOptions, _token: vscode.CancellationToken): vscode.ProviderResult<vscode.LanguageModelChatInformation[]> {
     if (!this.discoveryDone || this.availableModels.length === 0) {
       return [];
     }
@@ -211,18 +153,14 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
     }));
   }
 
-  async provideTokenCount(
-    modelChatInfo: vscode.LanguageModelChatInformation, 
-    text: string | vscode.LanguageModelChatRequestMessage, 
-    token: vscode.CancellationToken
-  ): Promise<number> {
+  async provideTokenCount(modelChatInfo: vscode.LanguageModelChatInformation, text: string | vscode.LanguageModelChatRequestMessage, token: vscode.CancellationToken): Promise<number> {
     const spec = this.availableModels.find((m) => m.id === modelChatInfo.version);
     const provider = this.activeProviders.get(spec?.vendor || "");
-    
+
     if (provider?.provideTokenCount) {
       return provider.provideTokenCount(text, token);
     }
-    
+
     // Fallback heuristic: ~4 chars per token, used to check if the request is too long to send to the model
     if (typeof text === "string") {
       return Math.ceil(text.length / 4);
@@ -247,7 +185,7 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
   ): Promise<void> {
     const modelId = model.version;
     const spec = this.availableModels.find((m) => m.id === modelId);
-    
+
     log(`▶ provideLanguageModelChatResponse called — model: ${modelId}, region: ${this.region}, vendor: ${spec?.vendor}, messages: ${messages.length}`);
 
     if (!spec) {
@@ -264,15 +202,17 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
     try {
       const result = await provider.provideLanguageModelChatResponse(modelId, messages, options, progress, token);
       log(`  ✅ Successfully completed request via plugin ${provider.vendor}`);
-      
+
       if (result.usage.input > 0 || result.usage.output > 0) {
-        this.usageTracker.recordUsage(model.id, {
-          input: result.usage.input,
-          output: result.usage.output,
-          cache_read: result.usage.cache_read,
-          cache_create: result.usage.cache_create,
-          characters: result.charCount
-        }).catch(err => log(`  ⚠️ Failed to record usage: ${err}`));
+        this.usageTracker
+          .recordUsage(model.id, {
+            input: result.usage.input,
+            output: result.usage.output,
+            cache_read: result.usage.cache_read,
+            cache_create: result.usage.cache_create,
+            characters: result.charCount,
+          })
+          .catch((err) => log(`  ⚠️ Failed to record usage: ${err}`));
       }
     } catch (e) {
       log(`  ❌ provideLanguageModelChatResponse error: ${e}`);
