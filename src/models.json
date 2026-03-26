@@ -45,6 +45,17 @@
       "pricing": { "input": 0.075, "output": 0.3, "cache_read": 0.01875, "cache_create": 0.075 }
     },
     {
+      "id": "gemini-3-flash-preview-high",
+      "vendor": "google",
+      "displayName": "Google Gemini 3 Flash (High)",
+      "family": "gemini",
+      "version": "gemini-3-flash-preview-high",
+      "maxInputTokens": 1048576,
+      "maxOutputTokens": 8192,
+      "capabilities": { "imageInput": true, "toolCalling": true },
+      "pricing": { "input": 0.075, "output": 0.3, "cache_read": 0.01875, "cache_create": 0.075 }
+    },
+    {
       "id": "gemini-3.1-pro-preview-high",
       "vendor": "google",
       "displayName": "Google Gemini 3.1 Pro (High Thinking)",
