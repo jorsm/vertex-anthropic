@@ -4,6 +4,17 @@ All notable changes to the **Vertex AI Models Chat Provider** extension will be 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.1] — 2026-04-15
+
+### Fixed
+- **400 Bad Request Fix** — Resolved an issue where Gemini API would reject tools containing unsupported JSON schema fields (like `enumDescriptions`, `examples`, or `markdownDescription`).
+
+### Added
+- **Debug Command** — Added `Vertex AI: Dump Installed Tools Schema` command to inspect schemas of all installed tools in the workspace for easier troubleshooting.
+
+### Changed
+- **Schema Validation** — Implemented a strict allowlist for tool input schemas to ensure compatibility with Gemini's OpenAPI-based validation.
+
 ## [0.2.0] — 2026-04-15
 
 ### Changed
