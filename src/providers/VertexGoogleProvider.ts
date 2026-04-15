@@ -8,6 +8,54 @@ function log(msg: string): void {
   outputChannel.appendLine(`[${ts}] ${msg}`);
 }
 
+const ALLOWED_SCHEMA_FIELDS = new Set([
+  "anyOf",
+  "default",
+  "description",
+  "enum",
+  "example",
+  "format",
+  "items",
+  "maxItems",
+  "maxLength",
+  "maxProperties",
+  "maximum",
+  "minItems",
+  "minLength",
+  "minProperties",
+  "minimum",
+  "nullable",
+  "pattern",
+  "properties",
+  "propertyOrdering",
+  "required",
+  "title",
+  "type",
+]);
+
+function sanitizeSchema(obj: any): any {
+  if (Array.isArray(obj)) {
+    return obj.map(sanitizeSchema);
+  } else if (obj !== null && typeof obj === "object") {
+    const newObj: any = {};
+    for (const key in obj) {
+      if (ALLOWED_SCHEMA_FIELDS.has(key)) {
+        // 'properties' values are schemas, but 'properties' keys are arbitrary property names
+        if (key === "properties" && typeof obj[key] === "object" && obj[key] !== null) {
+          newObj[key] = {};
+          for (const propName in obj[key]) {
+            newObj[key][propName] = sanitizeSchema(obj[key][propName]);
+          }
+        } else {
+          newObj[key] = sanitizeSchema(obj[key]);
+        }
+      }
+    }
+    return newObj;
+  }
+  return obj;
+}
+
 export class VertexGoogleProvider implements VertexModelProvider {
   vendor = "google";
   private client: any;
@@ -275,23 +323,14 @@ export class VertexGoogleProvider implements VertexModelProvider {
       }
 
       if (options.tools && options.tools.length > 0) {
-        const removeEnumDescriptions = (schema: any): any => {
-          if (!schema || typeof schema !== 'object') return schema;
-          if (Array.isArray(schema)) return schema.map(removeEnumDescriptions);
-          const result: any = {};
-          for (const [key, value] of Object.entries(schema)) {
-            if (key === 'enumDescriptions') continue;
-            result[key] = removeEnumDescriptions(value);
-          }
-          return result;
-        };
         const declarations = options.tools.map((t) => ({
           name: t.name,
           description: t.description,
-          parameters: removeEnumDescriptions(t.inputSchema || { type: "object", properties: {} }),
+          parameters: sanitizeSchema(t.inputSchema || { type: "object", properties: {} }),
         }));
         generationConfig.tools = [{ functionDeclarations: declarations }];
-        log(`  🔧 Provided ${declarations.length} tools`);
+        log(`  🔧 Provided ${declarations.length} tools: ${declarations.map((d) => d.name).join(", ")}`);
+        log(`  🔧 Tool Schemas: ${JSON.stringify(declarations, null, 2)}`);
       }
 
       const client = await this.getClient();

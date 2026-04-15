@@ -74,15 +74,15 @@ The result of a region discovery operation, containing the successful `region` a
 ### activate
 [source](../src/extension.ts)
 The main entry point for the VS Code extension. It handles:
-- Configuration migration from legacy settings.
+- Configuration migration from legacy settings (`vertexAnthropic` to `vertexAiChat`).
 - Initializing the `UsageTrackerService` and `CostStatusBar`.
 - Registering the `VertexChatModelDispatcher` as a language model chat provider.
-- Setting up commands for model refreshing and commit message generation.
-- Watching for configuration changes to trigger re-discovery.
+- Registering extension commands including the usage dashboard (`claudeBilling.showDashboard`), manual model refreshing (`vertexAiChat.refreshModels`), tool schema dumping (`vertexAiChat.dumpTools`), and AI commit message generation (`vertexAiChat.generateCommitMessage`).
+- Watching for configuration changes (specifically `vertexAiChat.projectId`) to trigger re-discovery and update the active project.
 
 ### runDiscovery
 [source](../src/extension.ts)
-A helper function that triggers the model discovery process on the dispatcher and provides UI feedback (Information/Warning messages) to the user based on the results.
+A helper function that triggers the model discovery process on the dispatcher and provides UI feedback (Information, Warning, or Error messages) to the user based on the results.
 
 ---
 
