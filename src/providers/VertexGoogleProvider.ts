@@ -275,10 +275,20 @@ export class VertexGoogleProvider implements VertexModelProvider {
       }
 
       if (options.tools && options.tools.length > 0) {
+        const removeEnumDescriptions = (schema: any): any => {
+          if (!schema || typeof schema !== 'object') return schema;
+          if (Array.isArray(schema)) return schema.map(removeEnumDescriptions);
+          const result: any = {};
+          for (const [key, value] of Object.entries(schema)) {
+            if (key === 'enumDescriptions') continue;
+            result[key] = removeEnumDescriptions(value);
+          }
+          return result;
+        };
         const declarations = options.tools.map((t) => ({
           name: t.name,
           description: t.description,
-          parameters: t.inputSchema || { type: "object", properties: {} },
+          parameters: removeEnumDescriptions(t.inputSchema || { type: "object", properties: {} }),
         }));
         generationConfig.tools = [{ functionDeclarations: declarations }];
         log(`  🔧 Provided ${declarations.length} tools`);
