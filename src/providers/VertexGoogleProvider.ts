@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { isRetryableError, withRetry } from "../utils/retry";
+import { checkAuthError, isRetryableError, withRetry } from "../utils/retry";
 import { ChatInferenceResult, VertexModelProvider } from "./VertexModelProvider";
 
 const outputChannel = vscode.window.createOutputChannel("Vertex AI Models: Google Provider");
@@ -77,6 +77,7 @@ export class VertexGoogleProvider implements VertexModelProvider {
         log(`    🏓 Google ${modelId} -> ${actualId} → ✅ (rate limited, but available)`);
         return true;
       }
+      checkAuthError(e);
       log(`    🏓 Google ${modelId} -> ${actualId} → ❌ ${e}`);
       return false;
     }
@@ -438,8 +439,9 @@ export class VertexGoogleProvider implements VertexModelProvider {
         usage: { input: newTokens, output: outputTokens, cache_read: cacheRead, cache_create: cacheCreate },
         charCount,
       };
-    } catch (e) {
+    } catch (e: any) {
       log(`  ❌ Google provideLanguageModelChatResponse error: ${e}`);
+      checkAuthError(e);
       throw e;
     }
   }
