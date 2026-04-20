@@ -1,6 +1,6 @@
 import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
 import * as vscode from "vscode";
-import { isRetryableError, withRetry } from "../utils/retry";
+import { checkAuthError, isRetryableError, withRetry } from "../utils/retry";
 import { ChatInferenceResult, VertexModelProvider } from "./VertexModelProvider";
 
 // ─── Output channel for diagnostics ─────────────────────────────────────────
@@ -43,6 +43,7 @@ export class VertexAnthropicProvider implements VertexModelProvider {
         log(`    🏓 Anthropic ${modelId} → ✅ (rate limited, but available)`);
         return true;
       }
+      checkAuthError(e);
       log(`    🏓 Anthropic ${modelId} → ❌`);
       return false;
     }
@@ -106,8 +107,9 @@ export class VertexAnthropicProvider implements VertexModelProvider {
       const usage = await this.processStream(stream, charCount, progress, token);
 
       return { usage, charCount };
-    } catch (e) {
+    } catch (e: any) {
       log(`  ❌ Anthropic provideLanguageModelChatResponse error: ${e}`);
+      checkAuthError(e);
       throw e;
     }
   }
