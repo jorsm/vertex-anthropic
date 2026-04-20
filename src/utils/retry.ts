@@ -115,3 +115,26 @@ export function isRetryableError(e: any): boolean {
 
   return false;
 }
+
+/**
+ * Checks if an error is authentication-related (e.g. invalid ADC credentials)
+ * and if so, throws a user-friendly error instructing them to re-authenticate.
+ */
+export function checkAuthError(e: any): void {
+  if (!e) {
+    return;
+  }
+  
+  const msg = (e.message || e.toString()).toLowerCase();
+  if (
+    msg.includes("invalid_grant") || 
+    msg.includes("invalid_rapt") || 
+    msg.includes("could not load the default credentials") ||
+    msg.includes("reauth related error") ||
+    e.status === 401 ||
+    e.code === 401
+  ) {
+    throw new Error("Google Cloud credentials have expired or are invalid. Please run 'gcloud auth application-default login' in your terminal.");
+  }
+}
+

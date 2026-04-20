@@ -103,7 +103,11 @@ async function runDiscovery(provider: VertexChatModelDispatcher): Promise<void> 
     } else {
       vscode.window.showWarningMessage("Vertex AI Models Chat Provider: No models available. Check your Vertex AI Model Garden setup.");
     }
-  } catch (e) {
-    vscode.window.showErrorMessage(`Vertex AI Models Chat Provider: Discovery failed — ${e}`);
+  } catch (e: any) {
+    if (e.message && e.message.includes("Google Cloud credentials")) {
+      vscode.window.showErrorMessage(e.message);
+    } else {
+      vscode.window.showErrorMessage(`Vertex AI Models Chat Provider: Discovery failed — ${e}`);
+    }
   }
 }
