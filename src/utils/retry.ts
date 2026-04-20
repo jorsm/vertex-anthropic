@@ -1,5 +1,12 @@
 import * as vscode from "vscode";
 
+export class VertexAuthenticationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VertexAuthenticationError";
+  }
+}
+
 export interface RetryLogEntry {
   attempt: number;
   delayMs: number;
@@ -124,17 +131,9 @@ export function checkAuthError(e: any): void {
   if (!e) {
     return;
   }
-  
+
   const msg = (e.message || e.toString()).toLowerCase();
-  if (
-    msg.includes("invalid_grant") || 
-    msg.includes("invalid_rapt") || 
-    msg.includes("could not load the default credentials") ||
-    msg.includes("reauth related error") ||
-    e.status === 401 ||
-    e.code === 401
-  ) {
-    throw new Error("Google Cloud credentials have expired or are invalid. Please run 'gcloud auth application-default login' in your terminal.");
+  if (msg.includes("invalid_grant") || msg.includes("invalid_rapt") || msg.includes("could not load the default credentials") || msg.includes("reauth related error") || e.status === 401 || e.code === 401) {
+    throw new VertexAuthenticationError("Google Cloud credentials have expired or are invalid. Please run 'gcloud auth application-default login' in your terminal.");
   }
 }
-
