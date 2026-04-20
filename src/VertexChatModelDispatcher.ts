@@ -132,6 +132,17 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
     this.discoveryDone = false;
   }
 
+  /**
+   * Clears all available models and notifies VS Code of the change.
+   * Useful when authentication fails to prevent stale models from being used.
+   */
+  public clearModels(): void {
+    this.availableModels = [];
+    this.discoveryDone = false;
+    this._onDidChange.fire();
+    log("🚫 Available models cleared due to error.");
+  }
+
   // ── Chat provider interface ───────────────────────────────────────────
 
   provideLanguageModelChatInformation(_options: vscode.PrepareLanguageModelChatModelOptions, _token: vscode.CancellationToken): vscode.ProviderResult<vscode.LanguageModelChatInformation[]> {

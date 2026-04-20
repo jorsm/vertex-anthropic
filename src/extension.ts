@@ -4,6 +4,7 @@ import { CostStatusBar } from "./CostStatusBar";
 import { DashboardWebview } from "./DashboardWebview";
 import { UsageTrackerService } from "./UsageTrackerService";
 import { VertexChatModelDispatcher } from "./VertexChatModelDispatcher";
+import { VertexAuthenticationError } from "./utils/retry";
 
 export async function activate(context: vscode.ExtensionContext) {
   let config = vscode.workspace.getConfiguration("vertexAiChat");
@@ -94,19 +95,64 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 }
 
+/**
+ * Orchestrates the discovery of available Vertex AI models across prioritized regions.
+ * Updates the provider's state and notifies the user of the results.
+ *
+ * @param provider The dispatcher responsible for probing model availability.
+ */
 async function runDiscovery(provider: VertexChatModelDispatcher): Promise<void> {
   try {
     const result = await provider.discoverModelsAndRegion();
     if (result.availableModels.length > 0) {
+      // Success: notify user of available models and the selected region
       const names = result.availableModels.map((m) => m.displayName).join(", ");
       vscode.window.showInformationMessage(`Vertex AI Models Chat Provider: ${result.availableModels.length} model(s) available via ${result.region}: ${names}`);
     } else {
+      // No models found: warn user to check their project configuration
       vscode.window.showWarningMessage("Vertex AI Models Chat Provider: No models available. Check your Vertex AI Model Garden setup.");
     }
   } catch (e: any) {
-    if (e.message && e.message.includes("Google Cloud credentials")) {
-      vscode.window.showErrorMessage(e.message);
+    // Clear any stale model list to prevent "silent fallbacks" in the chat UI
+    provider.clearModels();
+
+    if (e instanceof VertexAuthenticationError) {
+      // Specialized handling for expired/invalid Google Cloud credentials
+      const loginAction = "Login with gcloud";
+      const selection = await vscode.window.showErrorMessage(e.message, loginAction);
+
+      if (selection === loginAction) {
+        // Automation: open a terminal and run the auth command if the user clicks the button
+        const terminal = vscode.window.createTerminal({
+          name: "Vertex AI: Authentication",
+          iconPath: new vscode.ThemeIcon("key"),
+        });
+
+        // Use the shell integration API to watch the terminal output in real-time.
+        // As soon as gcloud prints "Credentials saved to file", we trigger a refresh
+        // so the user doesn't have to wait for the command to finish or manually click anything.
+        const disposable = vscode.window.onDidStartTerminalShellExecution(async (event) => {
+          if (event.terminal === terminal) {
+            for await (const data of event.execution.read()) {
+              if (data.includes("Credentials saved to file")) {
+                vscode.window.showInformationMessage("Vertex AI: Authentication successful! Refreshing models…");
+                runDiscovery(provider);
+                disposable.dispose(); // Cleanup the listener
+                break;
+              }
+            }
+          }
+        });
+
+        terminal.show();
+        // Use the configured project ID to avoid unnecessary API prompts on the default project,
+        // and --quiet to exit cleanly after credentials are saved.
+        const projectId = vscode.workspace.getConfiguration("vertexAiChat").get<string>("projectId") || "";
+        const command = projectId ? `gcloud auth application-default login --project ${projectId} --quiet` : "gcloud auth application-default login --quiet";
+        terminal.sendText(command);
+      }
     } else {
+      // Generic fallback for other discovery failures (e.g., networking, project ID errors)
       vscode.window.showErrorMessage(`Vertex AI Models Chat Provider: Discovery failed — ${e}`);
     }
   }
