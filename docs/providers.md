@@ -76,7 +76,7 @@ The `VertexGoogleProvider` class implements the `VertexModelProvider` interface 
 [source](../src/providers/VertexGoogleProvider.ts)
 `initialize(projectId: string, region: string): void`
 
-Sets the GCP Project ID and regional endpoint (e.g., `us-central1`) for the provider.
+Sets the GCP Project ID and regional endpoint (e.g., `us-central1`) for the provider. It also initiates a dynamic schema discovery process to fetch the latest supported OpenAPI 3.0 schema keys from the Vertex AI Discovery API, ensuring tool definitions remain compatible with API updates.
 
 #### pingModel
 [source](../src/providers/VertexGoogleProvider.ts)
@@ -96,7 +96,7 @@ Provides a rough estimation of token usage. For text or message objects, it comp
 
 Main entry point for chat inference. This method:
 1. Maps VS Code messages to the Gemini `contents` format, including support for multimodal `LanguageModelDataPart` (images and non-image data decoding), and ensures the conversation starts with a user message as required by the Gemini API.
-2. **Sanitizes tool input schemas** by recursively removing unsupported keys like `enumDescriptions` and `examples` from tool definitions to ensure compatibility with the Vertex AI Gemini API.
+2. **Sanitizes tool input schemas** using a deep-recursive positive filter to ensure compatibility with Vertex AI's OpenAPI 3.0 requirements. It preserves only schema properties that are explicitly supported by the Google Cloud AI Platform (e.g., `type`, `properties`, `required`), stripping out arbitrary or non-standard metadata keys like `$comment` or `enumDescriptions` that would otherwise trigger `400 INVALID_ARGUMENT` responses.
 3. Re-injects cached thought signatures into the conversation history for both **assistant text parts** and **tool call parts** to preserve reasoning quality.
 4. Merges consecutive tool result messages into a single user turn to satisfy Gemini API requirements for parallel tool calls.
 5. **Normalizes tool results** into JSON objects, wrapping primitive return values to comply with Gemini's `google.protobuf.Struct` requirement for function responses, and ensuring the function name is correctly associated with the response.
