@@ -4,6 +4,12 @@ All notable changes to the **Vertex AI Models Chat Provider** extension will be 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.6] — 2026-04-23
+
+### Fixed
+- **Tool Schema Validation** — Resolved \`400 INVALID_ARGUMENT\` errors caused by unexpected tool properties. Implemented a Hybrid Discovery Allowlist that fetches Google Vertex's supported JSON Schema properties on the fly. 
+- **Required Fields Fix** — Fixed an issue where the sanitizer was incorrectly stripping out tool parameter arguments within the \`properties\` map, causing requirement validation mismatch on Google's end.
+
 ## [0.2.5] — 2026-04-21
 
 ### Added
