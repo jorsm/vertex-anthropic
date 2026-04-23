@@ -19,6 +19,13 @@ This extension registers **Google Gemini** and **Anthropic Claude** as first-cla
 
 ---
 
+> [!IMPORTANT]
+> **Google Cloud Prerequisites**
+> Before using this extension, ensure your GCP project is properly configured:
+> 1. **Enable APIs**: Enable the **Vertex AI API** (`aiplatform.googleapis.com`) in the Google Cloud Console ([Docs](https://cloud.google.com/vertex-ai/docs/start/cloud-environment)).
+> 2. **IAM Roles**: Your authenticated user/service account requires the **Vertex AI User** (`roles/aiplatform.user`) role ([Docs](https://cloud.google.com/vertex-ai/docs/general/access-control)).
+> 3. **Model Access**: To use Anthropic Claude models, you must manually find them in the **Vertex AI Model Garden** and click **Enable** to accept the terms of service ([Docs](https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-claude)).
+
 ## 🚀 Quick Start
 
 1. **Install**: Find **Vertex AI Models Chat Provider** in the VS Code Marketplace and click Install.
