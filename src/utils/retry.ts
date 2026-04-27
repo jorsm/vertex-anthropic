@@ -50,49 +50,60 @@ export async function withRetry<T>(operation: () => Promise<T>, options?: RetryO
 
     try {
       const result = await operation();
-
-      // If we had previous retries that eventually succeeded, log the summary
-      if (attempt > 0 && options?.log) {
-        options.log(`✅ Operation succeeded after ${attempt} retries.`);
-        options.log(`   Retry history: ${JSON.stringify(retryLog, null, 2)}`);
-      }
-
+      logRetrySummary(true, attempt, retryLog, undefined, options?.log);
       return result;
     } catch (e: any) {
-      const isRetryable = isRetryableError(e);
-
-      if (!isRetryable || attempt >= maxRetries) {
-        // If we fail after some retries, we can optionally log the history
-        if (attempt > 0 && options?.log) {
-          options.log(`❌ Operation failed after ${attempt} retries. Final error: ${e.message || e}`);
-          options.log(`   Retry history: ${JSON.stringify(retryLog, null, 2)}`);
-        }
+      if (!isRetryableError(e) || attempt >= maxRetries) {
+        logRetrySummary(false, attempt, retryLog, e, options?.log);
         throw e;
       }
 
       attempt++;
-
-      // Exponential backoff: baseDelay * 2^(attempt-1), capped at maxDelayMs
-      // Adding jitter (random 0-1000ms) to prevent thundering herd problem
-      const delayMs = Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt - 1)) + Math.random() * 1000;
-      const errorMsg = e.message || e.toString();
-
-      // Keep a structured log of this retry attempt
-      retryLog.push({
-        attempt,
-        delayMs: Math.round(delayMs),
-        error: errorMsg,
-        timestamp: new Date().toISOString(),
-      });
-
-      if (options?.log) {
-        options.log(`⚠️ Retryable error encountered: "${errorMsg}". Retrying in ${Math.round(delayMs)}ms (attempt ${attempt}/${maxRetries})...`);
-      }
-
+      const delayMs = calculateDelay(attempt, baseDelayMs, maxDelayMs);
+      handleRetryAttempt(attempt, maxRetries, delayMs, e, retryLog, options?.log);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 }
+
+function calculateDelay(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
+  return Math.min(maxDelayMs, baseDelayMs * Math.pow(2, attempt - 1)) + Math.random() * 1000;
+}
+
+function logRetrySummary(success: boolean, attempt: number, retryLog: RetryLogEntry[], error: any, log?: (msg: string) => void) {
+  if (attempt === 0 || !log) {
+    return;
+  }
+  const message = success
+    ? `✅ Operation succeeded after ${attempt} retries.`
+    : `❌ Operation failed after ${attempt} retries. Final error: ${error.message || error}`;
+  log(message);
+  log(`   Retry history: ${JSON.stringify(retryLog, null, 2)}`);
+}
+
+function handleRetryAttempt(attempt: number, maxRetries: number, delayMs: number, e: any, retryLog: RetryLogEntry[], log?: (msg: string) => void) {
+  const errorMsg = e.message || e.toString();
+  retryLog.push({
+    attempt,
+    delayMs: Math.round(delayMs),
+    error: errorMsg,
+    timestamp: new Date().toISOString(),
+  });
+
+  if (log) {
+    log(`⚠️ Retryable error encountered: "${errorMsg}". Retrying in ${Math.round(delayMs)}ms (attempt ${attempt}/${maxRetries})...`);
+  }
+}
+
+// Native Node.js / Fetch network error codes that are safe to retry
+const NETWORK_ERROR_CODES = new Set([
+  "ECONNRESET", // Connection reset by peer
+  "ETIMEDOUT", // Operation timeout
+  "ECONNREFUSED", // Connection refused (e.g. server down)
+  "ENOTFOUND", // DNS lookup failed
+  "EAI_AGAIN", // Temporary DNS error
+  "UND_ERR_CONNECT_TIMEOUT", // Undici/Node.js fetch specific timeout
+]);
 
 /**
  * Determines if an error is transient and should trigger a retry.
@@ -115,13 +126,13 @@ export function isRetryableError(e: any): boolean {
     return true;
   }
 
-  // 1. GESTIONE ERRORI DI RETE (dal messaggio) e messaggi generici
+  // Manage specific error messages that indicate transient issues (e.g. network problems, timeouts)
   if (
     msg.includes("fetch failed") ||
     msg.includes("network error") ||
     msg.includes("socket hang up") ||
     msg.includes("timeout") ||
-    msg.includes("sorry, your request failed") // Cattura l'errore specifico che vedi nei log
+    msg.includes("sorry, your request failed") // Common message from Google APIs under heavy load
   ) {
     return true;
   }
@@ -131,18 +142,8 @@ export function isRetryableError(e: any): boolean {
     return true;
   }
 
-  // 2. GESTIONE ERRORI DI RETE (dai codici di errore nativi di Node.js / Fetch)
-  const networkErrorCodes = [
-    "ECONNRESET",    // Connessione resettata dal peer
-    "ETIMEDOUT",     // Timeout dell'operazione
-    "ECONNREFUSED",  // Connessione rifiutata (es. server giù)
-    "ENOTFOUND",     // Impossibile risolvere il DNS
-    "EAI_AGAIN",     // Errore DNS temporaneo
-    "UND_ERR_CONNECT_TIMEOUT" // Timeout specifico di undici (usato da Node.js fetch)
-  ];
-
-  // Controlla l'error code principale o il cause (se l'errore è incapsulato)
-  if (networkErrorCodes.includes(e.code) || (e.cause && networkErrorCodes.includes(e.cause.code))) {
+  // Check the main error code or the cause (if the error is wrapped)
+  if (NETWORK_ERROR_CODES.has(e.code) || (e.cause && NETWORK_ERROR_CODES.has(e.cause.code))) {
     return true;
   }
 
