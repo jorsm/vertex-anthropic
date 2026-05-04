@@ -65,7 +65,7 @@ export async function withRetry<T>(operation: () => Promise<T>, options?: RetryO
     if (elapsedMs >= 60000) {
       const remainingMinutes = Math.max(0, Math.round((maxRetryDurationMs - elapsedMs) / 60000));
       vscode.window.showWarningMessage(
-        `Vertex AI Models Chat Provider: la chiamata sta fallendo per un tempo prolungato. L'estensione ha già provato nuovi tentativi per 1 minuto ma il servizio sta ancora dando problemi. Senza toccare nulla continuerà a ritentare per i successivi ${remainingMinutes} minuti (in base alla configurazione). Se vuoi fermare la richiesta, usa il pulsante Stop/Cancel nella chat dell'agente.`,
+        `Vertex AI Models Chat Provider: the request has been failing for an extended time. The extension has already retried for 1 minute, but the service is still having issues. Without action, it will continue retrying for the next ${remainingMinutes} minutes (based on configuration). If you want to stop it, use the Stop/Cancel button in the agent chat.`,
       );
     }
   }, 60000);
