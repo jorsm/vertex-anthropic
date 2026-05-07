@@ -15,8 +15,6 @@ export interface RetryLogEntry {
 }
 
 export interface RetryOptions {
-  /** Maximum number of retries before giving up (default: unlimited when duration-based retry is enabled) */
-  maxRetries?: number;
   /** Base delay in milliseconds for exponential backoff (default: 2000) */
   baseDelayMs?: number;
   /** Maximum delay in milliseconds between retries (default: 30000) */
@@ -27,6 +25,8 @@ export interface RetryOptions {
   token?: vscode.CancellationToken;
   /** Maximum total retry duration in milliseconds (default from settings or 30 minutes) */
   maxRetryDurationMs?: number;
+  /** Time in milliseconds before a notification is shown for a long-running retry (default from settings or 1 minute) */
+  warningThresholdMs?: number;
 }
 
 /**
@@ -38,78 +38,173 @@ export interface RetryOptions {
  * @returns The result of the operation if successful.
  */
 export async function withRetry<T>(operation: () => Promise<T>, options?: RetryOptions): Promise<T> {
-  const maxRetries = options?.maxRetries ?? Number.MAX_SAFE_INTEGER;
   const baseDelayMs = options?.baseDelayMs ?? 2000;
   const maxDelayMs = options?.maxDelayMs ?? 30000;
   const maxRetryDurationMs = options?.maxRetryDurationMs ?? getRetryMaxDurationMsFromSettings();
+  const warningThresholdMs = options?.warningThresholdMs ?? getRetryWarningThresholdMsFromSettings();
 
   let attempt = 0;
   const retryLog: RetryLogEntry[] = [];
   const startTime = Date.now();
-  let longRetryNotificationTimer: ReturnType<typeof setTimeout> | undefined;
-  let finished = false;
+  let warningShown = false;
 
-  const cleanupTimer = () => {
-    if (longRetryNotificationTimer) {
-      clearTimeout(longRetryNotificationTimer);
-      longRetryNotificationTimer = undefined;
-    }
-  };
+  // We use a custom abort controller to stop the sleep early if the user cancels via progress UI
+  const sleepAbortController = new AbortController();
 
-  longRetryNotificationTimer = setTimeout(() => {
-    if (finished || options?.token?.isCancellationRequested) {
-      return;
-    }
+  // Listen to the original cancellation token to abort sleep as well
+  const tokenListener = options?.token?.onCancellationRequested(() => {
+    sleepAbortController.abort();
+  });
 
-    const elapsedMs = Date.now() - startTime;
-    if (elapsedMs >= 60000) {
-      const remainingMinutes = Math.max(0, Math.round((maxRetryDurationMs - elapsedMs) / 60000));
-      vscode.window.showWarningMessage(
-        `Vertex AI Models Chat Provider: the request has been failing for an extended time. The extension has already retried for 1 minute, but the service is still having issues. Without action, it will continue retrying for the next ${remainingMinutes} minutes (based on configuration). If you want to stop it, use the Stop/Cancel button in the agent chat.`,
-      );
-    }
-  }, 60000);
-
-  while (true) {
-    if (options?.token?.isCancellationRequested) {
-      cleanupTimer();
-      throw new Error("Cancelled by user");
-    }
-
-    try {
-      const result = await operation();
-      finished = true;
-      cleanupTimer();
-      logRetrySummary(true, attempt, retryLog, undefined, options?.log);
-      return result;
-    } catch (e: any) {
-      const elapsedMs = Date.now() - startTime;
-      if (!isRetryableError(e) || attempt >= maxRetries || elapsedMs >= maxRetryDurationMs) {
-        cleanupTimer();
-        logRetrySummary(false, attempt, retryLog, e, options?.log);
-        throw e;
+  try {
+    while (true) {
+      if (options?.token?.isCancellationRequested || sleepAbortController.signal.aborted) {
+        throw new Error("Cancelled by user");
       }
 
-      attempt++;
-      const delayMs = calculateDelay(attempt, baseDelayMs, maxDelayMs);
-      const timeLeftMs = Math.max(0, maxRetryDurationMs - elapsedMs);
-      const actualDelayMs = Math.min(delayMs, timeLeftMs);
+      try {
+        const result = await operation();
+        logRetrySummary(true, attempt, retryLog, undefined, options?.log);
+        return result;
+      } catch (e: any) {
+        const elapsedMs = Date.now() - startTime;
+        if (!isRetryableError(e) || elapsedMs >= maxRetryDurationMs) {
+          logRetrySummary(false, attempt, retryLog, e, options?.log);
+          throw e;
+        }
 
-      if (actualDelayMs <= 0) {
-        cleanupTimer();
-        logRetrySummary(false, attempt, retryLog, e, options?.log);
-        throw e;
+        attempt++;
+        const delayMs = calculateDelay(attempt, baseDelayMs, maxDelayMs);
+        const timeLeftMs = Math.max(0, maxRetryDurationMs - elapsedMs);
+        const actualDelayMs = Math.min(delayMs, timeLeftMs);
+
+        if (actualDelayMs <= 0) {
+          logRetrySummary(false, attempt, retryLog, e, options?.log);
+          throw e;
+        }
+
+        handleRetryAttempt(attempt, actualDelayMs, e, retryLog, options?.log);
+
+        // Show progress warning if threshold is reached
+        if (elapsedMs >= warningThresholdMs && !warningShown) {
+          warningShown = true;
+          // Wrap the REST of the retry loop in the progress notification
+          return await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Notification,
+              title: "Vertex AI Models Chat Provider",
+              cancellable: true,
+            },
+            async (progress, progressToken) => {
+              progressToken.onCancellationRequested(() => {
+                sleepAbortController.abort();
+              });
+
+              progress.report({
+                message: `The request has been failing for an extended time. Retrying for up to ${Math.round((maxRetryDurationMs - elapsedMs) / 60000)} minutes...`,
+              });
+
+              try {
+                await sleep(actualDelayMs, sleepAbortController.signal);
+              } catch (sleepError: any) {
+                if (sleepError.name === "AbortError") {
+                  throw new Error("Cancelled by user");
+                }
+                throw sleepError;
+              }
+
+              // Continue the loop inside the withProgress wrapper
+              while (true) {
+                if (options?.token?.isCancellationRequested || progressToken.isCancellationRequested || sleepAbortController.signal.aborted) {
+                  throw new Error("Cancelled by user");
+                }
+
+                try {
+                  const result = await operation();
+                  logRetrySummary(true, attempt, retryLog, undefined, options?.log);
+                  return result;
+                } catch (e2: any) {
+                  const elapsedMs2 = Date.now() - startTime;
+                  if (!isRetryableError(e2) || elapsedMs2 >= maxRetryDurationMs) {
+                    logRetrySummary(false, attempt, retryLog, e2, options?.log);
+                    throw e2;
+                  }
+
+                  attempt++;
+                  const delayMs2 = calculateDelay(attempt, baseDelayMs, maxDelayMs);
+                  const timeLeftMs2 = Math.max(0, maxRetryDurationMs - elapsedMs2);
+                  const actualDelayMs2 = Math.min(delayMs2, timeLeftMs2);
+
+                  if (actualDelayMs2 <= 0) {
+                    logRetrySummary(false, attempt, retryLog, e2, options?.log);
+                    throw e2;
+                  }
+
+                  const remainingMinutes = Math.max(0, Math.round((maxRetryDurationMs - elapsedMs2) / 60000));
+                  progress.report({
+                    message: `Retrying... (up to ${remainingMinutes} minutes remaining)`,
+                  });
+
+                  handleRetryAttempt(attempt, actualDelayMs2, e2, retryLog, options?.log);
+
+                  try {
+                    await sleep(actualDelayMs2, sleepAbortController.signal);
+                  } catch (sleepError: any) {
+                    if (sleepError.name === "AbortError") {
+                      throw new Error("Cancelled by user");
+                    }
+                    throw sleepError;
+                  }
+                }
+              }
+            }
+          );
+        } else {
+          try {
+            await sleep(actualDelayMs, sleepAbortController.signal);
+          } catch (sleepError: any) {
+            if (sleepError.name === "AbortError") {
+               throw new Error("Cancelled by user");
+            }
+            throw sleepError;
+          }
+        }
       }
-
-      handleRetryAttempt(attempt, maxRetries, actualDelayMs, e, retryLog, options?.log);
-      await new Promise((resolve) => setTimeout(resolve, actualDelayMs));
     }
+  } finally {
+    tokenListener?.dispose();
   }
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      return reject(new DOMException("Aborted", "AbortError"));
+    }
+
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    function onAbort() {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new DOMException("Aborted", "AbortError"));
+    }
+
+    signal?.addEventListener("abort", onAbort);
+  });
 }
 
 function getRetryMaxDurationMsFromSettings(): number {
   const durationMinutes = vscode.workspace.getConfiguration("vertexAiChat").get<number>("retryMaxDurationMinutes", 30);
   return Math.max(1, durationMinutes) * 60_000;
+}
+
+function getRetryWarningThresholdMsFromSettings(): number {
+  const thresholdMinutes = vscode.workspace.getConfiguration("vertexAiChat").get<number>("retryWarningThresholdMinutes", 1);
+  return Math.max(1, thresholdMinutes) * 60_000;
 }
 
 function calculateDelay(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
@@ -127,7 +222,7 @@ function logRetrySummary(success: boolean, attempt: number, retryLog: RetryLogEn
   log(`   Retry history: ${JSON.stringify(retryLog, null, 2)}`);
 }
 
-function handleRetryAttempt(attempt: number, maxRetries: number, delayMs: number, e: any, retryLog: RetryLogEntry[], log?: (msg: string) => void) {
+function handleRetryAttempt(attempt: number, delayMs: number, e: any, retryLog: RetryLogEntry[], log?: (msg: string) => void) {
   const errorMsg = e.message || e.toString();
   retryLog.push({
     attempt,
@@ -137,7 +232,7 @@ function handleRetryAttempt(attempt: number, maxRetries: number, delayMs: number
   });
 
   if (log) {
-    log(`⚠️ Retryable error encountered: "${errorMsg}". Retrying in ${Math.round(delayMs)}ms (attempt ${attempt}/${maxRetries})...`);
+    log(`⚠️ Retryable error encountered: "${errorMsg}". Retrying in ${Math.round(delayMs)}ms (attempt ${attempt})...`);
   }
 }
 

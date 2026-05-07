@@ -66,6 +66,12 @@
           "minimum": 1,
           "description": "Maximum retry duration in minutes for transient API failures such as 429 or 503."
         },
+        "vertexAiChat.retryWarningThresholdMinutes": {
+          "type": "integer",
+          "default": 1,
+          "minimum": 1,
+          "description": "Time in minutes before a notification is shown for a long-running retry."
+        },
         "vertexAiChat.hideBillingWarning": {
           "type": "boolean",
           "default": false,
