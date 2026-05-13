@@ -48,16 +48,7 @@
       {
         "vendor": "google-vertex",
         "displayName": "Google Cloud Vertex AI",
-        "managementCommand": "vertexAiChat.refreshModels",
-        "configurationSchema": {
-          "type": "object",
-          "properties": {
-            "endpoint": {
-              "type": "string",
-              "description": "Custom Vertex AI Endpoint URL (optional)"
-            }
-          }
-        }
+        "managementCommand": "vertexAiChat.refreshModels"
       }
     ],
     "configuration": {

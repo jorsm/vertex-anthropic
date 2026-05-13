@@ -152,20 +152,26 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
   private mapModels(): vscode.LanguageModelChatInformation[] {
     const models = this.availableModels.length > 0 ? this.availableModels : (localCatalog as ModelCatalog).candidateModels;
     
-    return models.map((m) => ({
-      id: m.id,
-      name: `${m.displayName} (Vertex AI)`,
-      detail: `Vertex AI in ${this.region}`,
-      tooltip: `${m.displayName} provided via Google Cloud Vertex AI (${this.region})`,
-      family: m.family,
-      version: m.version,
-      maxInputTokens: m.maxInputTokens,
-      maxOutputTokens: m.maxOutputTokens,
-      capabilities: {
-        imageInput: m.capabilities.imageInput,
-        toolCalling: m.capabilities.toolCalling,
-      },
-    }));
+    return models.map((m) => {
+      const info: any = {
+        id: m.id,
+        name: m.displayName,
+        detail: `Vertex AI (${this.region})`,
+        tooltip: `${m.displayName} via Google Cloud Vertex AI (${this.region})`,
+        family: m.family,
+        version: m.version,
+        maxInputTokens: m.maxInputTokens,
+        maxOutputTokens: m.maxOutputTokens,
+        capabilities: {
+          imageInput: m.capabilities.imageInput,
+          toolCalling: m.capabilities.toolCalling,
+        },
+        // Internal/Proposed properties to ensure visibility in Copilot Chat picker (VS Code 1.120+)
+        vendor: "google-vertex",
+        isUserSelectable: true,
+      };
+      return info as vscode.LanguageModelChatInformation;
+    });
   }
 
   async provideTokenCount(modelChatInfo: vscode.LanguageModelChatInformation, text: string | vscode.LanguageModelChatRequestMessage, token: vscode.CancellationToken): Promise<number> {
