@@ -43,7 +43,7 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   // Register the chat provider
-  const disposable = vscode.lm.registerLanguageModelChatProvider("Google Cloud Vertex AI", provider);
+  const disposable = vscode.lm.registerLanguageModelChatProvider("google-vertex-ai", provider);
   context.subscriptions.push(disposable);
 
   // Run discovery in the background on activation

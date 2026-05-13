@@ -46,10 +46,9 @@
     },
     "languageModelChatProviders": [
       {
-        "identifier": "vertex-anthropic",
-        "name": "Vertex AI Models Chat Provider",
-        "displayName": "Vertex AI Models Chat Provider",
-        "vendor": "Google Cloud Vertex AI"
+        "vendor": "google-vertex-ai",
+        "displayName": "Google Cloud Vertex AI",
+        "managementCommand": "vertexAiChat.refreshModels"
       }
     ],
     "configuration": {

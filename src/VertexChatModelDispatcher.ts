@@ -145,15 +145,23 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
 
   // ── Chat provider interface ───────────────────────────────────────────
 
-  provideLanguageModelChatInformation(_options: vscode.PrepareLanguageModelChatModelOptions, _token: vscode.CancellationToken): vscode.ProviderResult<vscode.LanguageModelChatInformation[]> {
+  provideLanguageModelChatInformation(options: { silent: boolean }, _token: vscode.CancellationToken): vscode.ProviderResult<vscode.LanguageModelChatInformation[]> {
+    if (options.silent) {
+      return this.availableModels.length > 0 ? this.mapModels() : [];
+    }
+
     if (!this.discoveryDone || this.availableModels.length === 0) {
       return [];
     }
 
+    return this.mapModels();
+  }
+
+  private mapModels(): vscode.LanguageModelChatInformation[] {
     return this.availableModels.map((m) => ({
       id: m.id,
       name: m.displayName,
-      detail: "Vertex AI",
+      detail: `Vertex AI (${this.region})`,
       family: m.family,
       version: m.version,
       maxInputTokens: m.maxInputTokens,
@@ -166,7 +174,7 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
   }
 
   async provideTokenCount(modelChatInfo: vscode.LanguageModelChatInformation, text: string | vscode.LanguageModelChatRequestMessage, token: vscode.CancellationToken): Promise<number> {
-    const spec = this.availableModels.find((m) => m.id === modelChatInfo.version);
+    const spec = this.availableModels.find((m) => m.id === modelChatInfo.id);
     const provider = this.activeProviders.get(spec?.vendor || "");
 
     if (provider?.provideTokenCount) {
@@ -195,7 +203,7 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken,
   ): Promise<void> {
-    const modelId = model.version;
+    const modelId = model.id;
     const spec = this.availableModels.find((m) => m.id === modelId);
 
     log(`▶ provideLanguageModelChatResponse called — model: ${modelId}, region: ${this.region}, vendor: ${spec?.vendor}, messages: ${messages.length}`);
