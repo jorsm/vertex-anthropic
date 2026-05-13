@@ -162,8 +162,9 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
       id: m.id,
       name: m.displayName,
       detail: `Vertex AI (${this.region})`,
-      family: m.family,
-      version: m.version,
+      tooltip: `${m.displayName} via Google Cloud Vertex AI (${this.region})`,
+      family: m.family === "claude" ? "claude-3" : (m.family === "gemini" ? "gemini-1.5" : m.family),
+      version: "1.0.0",
       maxInputTokens: m.maxInputTokens,
       maxOutputTokens: m.maxOutputTokens,
       capabilities: {

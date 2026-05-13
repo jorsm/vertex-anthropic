@@ -24,11 +24,6 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  if (!projectId) {
-    vscode.window.showWarningMessage("Vertex AI Models Chat Provider: Project ID is not configured. Please set vertexAiChat.projectId in settings.");
-    return;
-  }
-
   const usageTracker = new UsageTrackerService(context);
   const costStatusBar = new CostStatusBar(usageTracker);
   context.subscriptions.push(costStatusBar);
@@ -46,11 +41,18 @@ export async function activate(context: vscode.ExtensionContext) {
   const disposable = vscode.lm.registerLanguageModelChatProvider("google-vertex-ai", provider);
   context.subscriptions.push(disposable);
 
-  // Run discovery in the background on activation
-  runDiscovery(provider);
-
   // Register the "Refresh Models" command (Ctrl+Shift+P → Vertex AI Models Chat Provider: Refresh Models)
-  context.subscriptions.push(vscode.commands.registerCommand("vertexAiChat.refreshModels", () => runDiscovery(provider)));
+  context.subscriptions.push(
+    vscode.commands.registerCommand("vertexAiChat.refreshModels", async () => {
+      const currentProjectId = vscode.workspace.getConfiguration("vertexAiChat").get<string>("projectId");
+      if (!currentProjectId) {
+        vscode.window.showErrorMessage("Vertex AI Models Chat Provider: Project ID is not configured. Please set vertexAiChat.projectId in settings.");
+        return;
+      }
+      provider.setProjectId(currentProjectId);
+      return runDiscovery(provider);
+    }),
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("vertexAiChat.dumpTools", () => {
@@ -78,6 +80,13 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Register command for SCM "Generate Commit Message" button in the CHANGES toolbar
   context.subscriptions.push(vscode.commands.registerCommand("vertexAiChat.generateCommitMessage", (resourceUri?: vscode.Uri) => generateCommitMessage(provider.getGoogleProvider(), usageTracker, resourceUri)));
+
+  // If projectId is present, run discovery in the background on activation
+  if (projectId) {
+    runDiscovery(provider);
+  } else {
+    vscode.window.showWarningMessage("Vertex AI Models Chat Provider: Project ID is not configured. Please set vertexAiChat.projectId in settings.");
+  }
 
   // Re-run discovery when projectId setting changes
   context.subscriptions.push(
