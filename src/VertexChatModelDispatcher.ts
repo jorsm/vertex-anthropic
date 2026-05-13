@@ -43,7 +43,7 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
   private projectId: string;
   private region = "global";
   private availableModels: ModelSpec[] = [];
-  private activeProviders: Map<string, VertexModelProvider> = new Map();
+  private readonly activeProviders: Map<string, VertexModelProvider> = new Map();
   private discoveryDone = false;
   private readonly usageTracker: UsageTrackerService;
 
@@ -152,6 +152,10 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
   private mapModels(): vscode.LanguageModelChatInformation[] {
     const models = this.availableModels.length > 0 ? this.availableModels : (localCatalog as ModelCatalog).candidateModels;
     
+    // Check if we are running in VS Code 1.120 or higher
+    const versionParts = vscode.version.split('.');
+    const isV120OrHigher = Number.parseInt(versionParts[0]) > 1 || (Number.parseInt(versionParts[0]) === 1 && Number.parseInt(versionParts[1]) >= 120);
+
     return models.map((m) => {
       const info: any = {
         id: m.id,
@@ -166,10 +170,14 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
           imageInput: m.capabilities.imageInput,
           toolCalling: m.capabilities.toolCalling,
         },
-        // Internal/Proposed properties to ensure visibility in Copilot Chat picker (VS Code 1.120+)
-        vendor: "google-vertex",
-        isUserSelectable: true,
       };
+
+      if (isV120OrHigher) {
+        // Internal/Proposed properties to ensure visibility in Copilot Chat picker (VS Code 1.120+)
+        info.vendor = "google-vertex";
+        info.isUserSelectable = true;
+      }
+
       return info as vscode.LanguageModelChatInformation;
     });
   }
