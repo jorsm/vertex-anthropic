@@ -33,10 +33,10 @@ The central class that implements `vscode.LanguageModelChatProvider`. It manages
 
 **Methods:**
 - `onDidChangeLanguageModelChatInformation`: Event that fires when the available model list changes, prompting VS Code to refresh model information.
-- `discoverModelsAndRegion()`: Probes GCP regions to find available models based on the local catalog. Returns a `DiscoveryResult`.
+- `discoverModelsAndRegion()`: Probes GCP regions to find available models based on the local catalog. Returns a `DiscoveryResult`. Fires the change event upon successful discovery or failure.
 - `setProjectId(projectId: string)`: Updates the active GCP project and resets discovery state.
 - `clearModels()`: Clears all available models and notifies VS Code of the change. Useful when authentication fails to prevent stale models from being used.
-- `provideLanguageModelChatInformation(...)`: Returns the list of discovered models to VS Code. It returns the set of models found during the discovery process, falling back to the full set of candidate models from the local catalog if discovery is not yet complete or has not identified specific regional availability.
+- `provideLanguageModelChatInformation(...)`: Returns the list of discovered models to VS Code. It returns the set of models found during the discovery process, falling back to the full set of candidate models from the local catalog if discovery is not yet complete. It enriches model metadata with regional details, vendor information (`google-vertex`), and visibility flags to ensure compatibility with VS Code 1.120+ and Copilot Chat.
 - `provideTokenCount(...)`: Calculates or estimates token counts for messages. It uses provider-specific counting logic if available, falling back to a heuristic of ~4 characters per token (supporting both raw strings and `LanguageModelChatRequestMessage` with `LanguageModelTextPart` content).
 - `provideLanguageModelChatResponse(...)`: Streams the chat response from the appropriate vendor provider and records detailed usage (input, output, cache_read, cache_create, and character counts) via the `UsageTrackerService`.
 - `getAnthropicProvider()`: Returns the registered `VertexAnthropicProvider` instance.
