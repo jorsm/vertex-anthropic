@@ -4,6 +4,24 @@ All notable changes to the **Vertex AI Models Chat Provider** extension will be 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.0] — 2026-05-14
+
+### Added
+
+- **VS Code 1.120 Compatibility** — Implemented polymorphic metadata mapping to ensure seamless integration with the new organized Chat Model Picker introduced in VS Code 1.120.
+- **Cross-Platform Build Support** — Switched the `clean` script to use `rimraf`, resolving "command not found" errors on Windows environments.
+
+### Improved
+
+- **Model Visibility** — Injected internal metadata properties (`isUserSelectable`, explicit `vendor` slugs) to prevent models from being filtered out by the Copilot Chat application layer.
+- **UI Responsiveness** — Optimized model discovery to return the local catalog immediately, preventing "empty list" states during background probing.
+- **Performance** — Optimized `getUsageInRange` in the Usage Tracker with concurrent file I/O for faster dashboard loading.
+- **API Compliance** — Aligned provider registration and model identification logic with the latest `vscode.lm` API requirements.
+
+### Fixed
+
+- **Model Selection Issues** — Resolved a conflict where Vertex models were unselectable in newer VS Code versions due to naming and vendor ID mismatches.
+
 ## [0.3.1] — 2026-04-27
 
 ### Added
