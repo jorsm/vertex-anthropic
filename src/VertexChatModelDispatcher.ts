@@ -46,6 +46,7 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
   private readonly activeProviders: Map<string, VertexModelProvider> = new Map();
   private discoveryDone = false;
   private readonly usageTracker: UsageTrackerService;
+  private _discoveryPromise: Promise<DiscoveryResult> | null = null;
 
   /** Fires when the available model list changes — VS Code re-queries provideLanguageModelChatInformation. */
   private readonly _onDidChange = new vscode.EventEmitter<void>();
@@ -78,7 +79,16 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
 
   // ── Discovery ───────────────────────────────────────────────────────────
 
-  async discoverModelsAndRegion(): Promise<DiscoveryResult> {
+  discoverModelsAndRegion(): Promise<DiscoveryResult> {
+    if (!this._discoveryPromise) {
+      this._discoveryPromise = this._discoverModelsAndRegionImpl().finally(() => {
+        this._discoveryPromise = null;
+      });
+    }
+    return this._discoveryPromise;
+  }
+
+  private async _discoverModelsAndRegionImpl(): Promise<DiscoveryResult> {
     const catalog = localCatalog as ModelCatalog;
     const candidates = catalog.candidateModels;
     const regions = catalog.regionPriority;
@@ -212,6 +222,11 @@ export class VertexChatModelDispatcher implements vscode.LanguageModelChatProvid
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken,
   ): Promise<void> {
+    if (this._discoveryPromise) {
+      log(`  ⏳ Waiting for model discovery to complete before inference...`);
+      await this._discoveryPromise;
+    }
+
     const modelId = model.id;
     const spec = (this.availableModels.length > 0 ? this.availableModels : (localCatalog as ModelCatalog).candidateModels).find((m) => m.id === modelId);
 

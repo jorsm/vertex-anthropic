@@ -4,6 +4,12 @@ All notable changes to the **Vertex AI Models Chat Provider** extension will be 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.1] — 2026-05-19
+
+### Fixed
+
+- **Discovery Race Condition** — Resolved an issue where sending a chat message immediately after VS Code startup would fail with an "Authentication not set up" error. The dispatcher now gracefully awaits the completion of background model discovery before processing inference requests.
+
 ## [0.4.0] — 2026-05-14
 
 ### Added
