@@ -4,6 +4,13 @@ All notable changes to the **Vertex AI Models Chat Provider** extension will be 
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.2] — 2026-05-20
+
+### Added
+
+- **Gemini 3.5 Flash Support** — Added support for the new `gemini-3.5-flash` model and its high-reasoning variant `gemini-3.5-flash-high`.
+- **In-UI Pricing Display** — Added live pricing information directly to the model picker details and tooltips, allowing users to see token costs ($/1M) before selecting a model.
+
 ## [0.4.1] — 2026-05-19
 
 ### Fixed
